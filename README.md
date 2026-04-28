@@ -1,4 +1,5 @@
 # The Grimoire
+![CC BY-SA 4.0](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey?style=for-the-badge)
 
 Runbook pessoal de TI: registro dos problemas que resolvi, do que configurei e de como ficou. Escrito para eu mesmo no futuro — mas público, porque boa documentação não tem razão para ficar escondida.
 

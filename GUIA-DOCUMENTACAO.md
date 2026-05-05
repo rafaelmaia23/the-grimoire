@@ -27,8 +27,9 @@ Coleção pessoal de documentação técnica no estilo runbook/TIL (Today I Lear
 | Escopo | Uso |
 |---|---|
 | `PC` | Configurações e fixes no computador pessoal |
-| `SRV` | Configurações e fixes no servidor VPS |
+| `SRV` | Configurações e fixes no servidor VPS - hostinger |
 | `NOTE` | Configurações e fixes no notebook pessoal |
+| `OCI` | Configurações e fixes na vm dentro do OCI |
 
 Para adicionar um novo escopo, documente aqui antes de usar.
 

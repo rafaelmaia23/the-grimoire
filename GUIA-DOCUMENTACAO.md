@@ -6,32 +6,59 @@ Este arquivo define as regras e padrões para criar e manter documentação nest
 
 ## O que é o Grimoire
 
-Coleção pessoal de documentação técnica no estilo runbook/TIL (Today I Learned): registros de problemas resolvidos, configurações aplicadas e setups realizados. O foco é ser referência futura para eu mesmo — mas o repositório é público e pode ser usado como portifólio, então tudo que for escrito deve ser seguro para exposição.
+Coleção pessoal de documentação técnica no estilo runbook/TIL (Today I Learned): registros de problemas resolvidos, configurações aplicadas, decisões tomadas e setups realizados. O foco é ser referência futura para eu mesmo — mas o repositório é público e pode ser usado como portfólio, então tudo que for escrito deve ser seguro para exposição.
 
 ---
 
 ## Nomenclatura dos Arquivos
 
 ```
-{ESCOPO}_{DATA}_{slug}.md
+{TIPO}-{ESCOPO}-{YYYY-MM-DD}-{slug}.md
 ```
+
+Separador único: hífen (`-`). Sem underscores.
 
 | Parte | Formato | Exemplo |
 |---|---|---|
-| `ESCOPO` | Prefixo em maiúsculas | `PC`, `SRV`, `NOTE` |
-| `DATA` | `YYYY-MM-DD` | `2026-04-23` |
-| `slug` | Kebab-case em português, descritivo | `rustdesk-flatpak-to-rpm-fedora43` |
+| `TIPO` | Prefixo em maiúsculas, ver tabela abaixo | `INC`, `SETUP`, `ADR` |
+| `ESCOPO` | Prefixo em maiúsculas, onde foi aplicado | `PC`, `SRV`, `NOTE`, `OCI` |
+| `YYYY-MM-DD` | Data | `2026-05-22` |
+| `slug` | Kebab-case em português, descritivo | `kvm-libvirt-coexistencia-docker` |
 
-**Escopos disponíveis:**
+**Exemplo completo:**
+```
+SETUP-PC-2026-05-22-qemu-kvm-libvirt-com-docker.md
+INC-PC-2026-05-21-libvirt-virbr0-docker-forward-drop.md
+ADR-PC-2026-05-22-libvirt-rede-isolada-do-docker.md
+```
+
+### Tipos disponíveis
+
+| Tipo | Propósito | Pergunta-teste |
+|---|---|---|
+| `SETUP` | Instalação/configuração de algo do zero. Como reinstalar/refazer. | "Se eu formatar a máquina, preciso disso pra montar de novo?" |
+| `FIX` | Resolução de problema pontual e enxuto. | "Algo quebrou, eu consertei, como?" |
+| `INC` | Incidente em profundidade — timeline, investigação, causa raiz, lições. | "Foi grave/duradouro/complexo, vale guardar a história completa?" |
+| `ADR` | Decisão arquitetural. Por que escolhi X e não Y. | "Por que esse caminho e não outro?" |
+| `RUNBOOK` | Procedimento operacional recorrente. | "Vou executar isso de novo, várias vezes?" |
+| `REF` | Referência/cheat sheet. Comandos, atalhos, decisões fixas. | "É consulta rápida, não passo-a-passo?" |
+
+**Distinções importantes:**
+
+- **FIX vs INC:** FIX é enxuto (1-2 sintomas, causa direta, comando que resolveu). INC tem timeline, investigação, múltiplos sintomas, causa raiz aprofundada. Quando em dúvida, comece como FIX — se virar épico durante a escrita, promove pra INC.
+- **SETUP vs RUNBOOK:** SETUP é instalação inicial, geralmente executada 1x (ou em reinstalações). RUNBOOK é procedimento recorrente (backup mensal, troca de servidor Mullvad, etc.).
+- **REF vs todo o resto:** REF é consultivo, sem narrativa. Listas de comandos, atalhos do KDE, snippets. Se você abre o doc pra "olhar uma coisa rápida", é REF.
+
+### Escopos disponíveis
 
 | Escopo | Uso |
 |---|---|
-| `PC` | Configurações e fixes no computador pessoal |
-| `SRV` | Configurações e fixes no servidor VPS - hostinger |
-| `NOTE` | Configurações e fixes no notebook pessoal |
-| `OCI` | Configurações e fixes na vm dentro do OCI |
+| `PC` | Computador pessoal |
+| `SRV` | Servidor VPS (Hostinger) |
+| `NOTE` | Notebook pessoal |
+| `OCI` | VM no Oracle Cloud Infrastructure |
 
-Para adicionar um novo escopo, documente aqui antes de usar.
+Para adicionar novo escopo, documente aqui antes de usar.
 
 ---
 
@@ -40,35 +67,65 @@ Para adicionar um novo escopo, documente aqui antes de usar.
 ### Cabeçalho obrigatório
 
 ```markdown
-# {Tipo}: {Descrição curta}
+# {TIPO}: {Descrição curta}
 
 - **Data:** YYYY-MM-DD
 - **Local:** {onde foi aplicado}
 - **Sistema:** {OS, versão, ambiente relevante}
 ```
 
-**Tipos:**
+O `{TIPO}` no `# H1` é o mesmo do prefixo do arquivo, em capitalização normal: `SETUP`, `FIX`, `INC`, `ADR`, `RUNBOOK`, `REF`.
 
-| Tipo | Quando usar |
-|---|---|
-| `Fix:` | Resolução de um problema específico |
-| `Setup:` | Configuração de algo do zero |
-| `Config:` | Documentação de uma decisão de configuração |
+### Seções por tipo
 
-### Seções comuns (usar conforme o tipo de doc)
+Cada tipo de doc tem seções esperadas. Não é rigido — use o que faz sentido.
 
-- **Contexto / Problema** — o que motivou o documento
-- **Causa Raiz** — por que o problema ocorria (para docs de Fix)
-- **Solução / Instalação / Como configurar** — os passos executados
-- **Como usar** — instruções de uso cotidiano (quando aplicável)
-- **Estado final** — como ficou depois de tudo aplicado
-- **Verificação / Referência rápida** — comandos úteis para checar o estado
-- **Como Evitar no Futuro** — lições aprendidas (para docs de Fix)
-- **Arquivos criados/modificados** — tabela resumo no final
+**SETUP**
+- Contexto — por que esse setup
+- Pré-requisitos — o que precisa estar pronto antes
+- Verificação prévia — confirmar estado atual antes de aplicar
+- Instalação / Como configurar — passos
+- Verificação pós-setup — confirmar que ficou ok
+- Estado final
+- Arquivos criados/modificados
 
-### Seção "Arquivos criados/modificados" (obrigatória)
+**FIX**
+- Sintoma — o que estava errado
+- Causa raiz — por quê
+- Solução — o que foi feito
+- Verificação
+- Arquivos modificados (se aplicável)
 
-Sempre terminar o documento com esta tabela:
+**INC**
+- Contexto / Sintoma inicial
+- Linha do tempo (se aplicável) — investigação cronológica
+- Causa raiz
+- Solução final
+- Estado final
+- Como evitar no futuro
+- Arquivos modificados
+
+**ADR**
+- Contexto — situação que motivou a decisão
+- Decisão — o que foi escolhido
+- Alternativas consideradas — o que foi descartado e por quê
+- Consequências — trade-offs, o que muda no futuro
+- Status — proposta / aceita / superada / revogada
+
+**RUNBOOK**
+- Quando executar — gatilhos
+- Pré-requisitos
+- Procedimento — passo a passo
+- Verificação
+- Rollback (se aplicável)
+
+**REF**
+- Tópico — agrupamento dos comandos/atalhos
+- Comandos com explicação curta
+
+### Seção "Arquivos criados/modificados" (obrigatória quando aplicável)
+
+Quando o documento criou ou modificou arquivos no sistema, sempre terminar com:
 
 ```markdown
 ## Arquivos criados/modificados
@@ -77,6 +134,8 @@ Sempre terminar o documento com esta tabela:
 |---|---|---|
 | `/caminho/do/arquivo` | Criado / Modificado / Configurado | O que faz |
 ```
+
+REF e ADR podem dispensar essa seção se forem puramente consultivos.
 
 ---
 
@@ -110,6 +169,7 @@ VPS_IP=76.61.2.79
 
 - IPs de redes Docker internas padrão (172.17.x, 172.18.x) — são genéricos
 - Ranges de rede padrão (192.168.0.0/16, 10.0.0.0/8, 100.64.0.0/10)
+- Rede default do libvirt (192.168.122.0/24)
 - Servidores DNS públicos (1.1.1.1, 8.8.8.8)
 - Versões de software
 - Nomes de containers Docker definidos pelo próprio software (ex: `nextcloud-aio-nextcloud`)
@@ -153,11 +213,12 @@ comando aqui
 
 ## Checklist antes de commitar
 
-- [ ] Nome do arquivo segue o padrão `{ESCOPO}_{DATA}_{slug}.md`
+- [ ] Nome do arquivo segue o padrão `{TIPO}-{ESCOPO}-{YYYY-MM-DD}-{slug}.md`
+- [ ] Tipo do arquivo coincide com o `# H1` interno
 - [ ] Cabeçalho com Data, Local e Sistema preenchidos
 - [ ] Nenhum IP real, domínio próprio, usuário ou path sensível no texto
 - [ ] Valores sensíveis substituídos por `{{PLACEHOLDER}}` e registrados em `values.local`
-- [ ] Tabela "Arquivos criados/modificados" no final
+- [ ] Tabela "Arquivos criados/modificados" no final (quando aplicável)
 - [ ] `values.local` está no `.gitignore` e **não** está sendo commitado
 
 ---

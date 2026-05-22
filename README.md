@@ -1,7 +1,7 @@
 # The Grimoire
 ![CC BY-SA 4.0](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey?style=for-the-badge)
 
-Runbook pessoal de TI: registro dos problemas que resolvi, do que configurei e de como ficou. Escrito para eu mesmo no futuro — mas público, porque boa documentação não tem razão para ficar escondida.
+Runbook pessoal de TI: registro dos problemas que resolvi, do que configurei, das decisões que tomei e de como ficou. Escrito para eu mesmo no futuro — mas público, porque boa documentação não tem razão para ficar escondida.
 
 Cada documento é um snapshot do que aconteceu: o contexto, o porquê, o que foi feito e como verificar. Sem padding — só o que é útil.
 
@@ -9,19 +9,29 @@ Cada documento é um snapshot do que aconteceu: o contexto, o porquê, o que foi
 
 ## Como está organizado
 
-Os arquivos seguem o padrão `{ESCOPO}_{DATA}_{slug}.md`:
+Os arquivos seguem o padrão `{TIPO}-{ESCOPO}-{YYYY-MM-DD}-{slug}.md`.
+
+### Tipos
+
+| Tipo | Propósito |
+|---|---|
+| `SETUP` | Instalação/configuração de algo do zero, reproduzível |
+| `FIX` | Resolução enxuta de problema pontual |
+| `INC` | Incidente em profundidade com timeline e causa raiz |
+| `ADR` | Decisão arquitetural — por que escolhi X e não Y |
+| `RUNBOOK` | Procedimento operacional recorrente |
+| `REF` | Referência/cheat sheet de consulta rápida |
+
+### Escopos
 
 | Escopo | Ambiente |
 |---|---|
-| `PC_` | Computador pessoal (Fedora 43, KDE Plasma 6, Wayland) |
-| `SRV_` | Servidor VPS (Ubuntu 24.04, Docker, Nextcloud AIO, Nginx Proxy Manager, Tailscale) |
-| `NOTE_` | Notebook pessoal (Fedora 43, KDE Plasma 6, Wayland) |
+| `PC` | Computador pessoal (Fedora 44, KDE Plasma 6, Wayland) |
+| `NOTE` | Notebook pessoal (Fedora, KDE Plasma 6, Wayland) |
+| `SRV` | Servidor VPS Hostinger (Ubuntu 24.04, Docker, Nextcloud AIO, Nginx Proxy Manager, Tailscale) |
+| `OCI` | VM Oracle Cloud Infrastructure (Ubuntu 24.04 ARM, Tailscale, WireGuard) |
 
-Cada documento começa com o tipo que define sua natureza:
-
-- `Fix:` — resolução de um problema específico, com causa raiz
-- `Setup:` — configuração de algo do zero
-- `Config:` — decisão de configuração documentada
+> **Nota:** Documentos anteriores a 2026-05-22 ainda usam o padrão antigo `{ESCOPO}_{DATA}_{slug}.md`. A migração para o novo padrão está em andamento (ver `TODO-MIGRACAO.md`).
 
 ---
 
@@ -35,7 +45,7 @@ As regras completas de nomenclatura, estrutura de documentos e o sistema de plac
 
 ## Stack documentada
 
-`Fedora 43` · `KDE Plasma 6` · `Wayland` · `PipeWire` · `systemd` · `Docker` · `Nextcloud AIO` · `Nginx Proxy Manager` · `Tailscale` · `AdGuard Home`
+`Fedora 44` · `KDE Plasma 6` · `Wayland` · `PipeWire` · `systemd` · `Docker` · `QEMU/KVM` · `libvirt` · `Nextcloud AIO` · `Nginx Proxy Manager` · `Tailscale` · `WireGuard` · `AdGuard Home`
 
 ---
 

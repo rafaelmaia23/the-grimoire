@@ -272,16 +272,52 @@ EOF
 - `log-driver` + `log-opts` — limita logs a 10MB × 3 arquivos por container. Previne enchimento do disco em servidores que rodam por muito tempo.
 - `dns` — DNS upstream pros containers. Previne `cURL error 6` causado pelo resolver interno `127.0.0.11` sem upstream (já visto em `FIX-SRV-2026-04-24-nextcloud-aio-docker-dns.md`).
 
-### Iniciar Docker
+### Iniciar Docker (service + socket)
 
 ```bash
-sudo systemctl enable --now docker
+# Habilita e inicia ambos: o service e o socket
+# O socket precisa ser habilitado explicitamente pra Docker subir no boot
+sudo systemctl enable --now docker.service docker.socket
 sleep 3
+
+# Confirma que ambos estão enabled e service ativo
+sudo systemctl is-enabled docker.service docker.socket
+sudo systemctl is-active docker.service
 sudo systemctl status docker | head -10
 
 sudo docker --version
 sudo docker run --rm hello-world
 ```
+
+> **Atenção:** o `docker.socket` precisa ser habilitado **separadamente** do `docker.service` em alguns casos. Habilitar só o service pode resultar em Docker não subir automaticamente após reboot. Pra garantir, sempre habilitar os dois explicitamente.
+
+### Adicionar usuário ao grupo docker
+
+Sem o usuário no grupo `docker`, é necessário `sudo` pra cada comando docker:
+
+```bash
+# Confirma se já está no grupo
+groups $USER | tr ' ' '\n' | grep docker || echo "não está no grupo"
+
+# Adiciona
+sudo usermod -aG docker $USER
+
+# Confirma que o grupo existe e tem o usuário
+getent group docker
+```
+
+⚠️ **A mudança de grupo só tem efeito após logout completo da sessão.** Não basta abrir terminal novo.
+
+Pra testar **antes** do logout numa shell isolada:
+
+```bash
+newgrp docker
+docker ps             # sem sudo, deve funcionar
+docker run --rm hello-world
+exit                  # sai da subshell
+```
+
+Se funcionar nessa shell, após logout/login completo da sessão tudo funciona normalmente.
 
 ---
 
@@ -341,13 +377,15 @@ Tudo deve continuar funcionando.
 Backend de firewall do sistema   : nftables nativo
 firewalld                         : FirewallBackend=nftables, ativo
 libvirt                           : firewall_backend = "nftables", tabela libvirt_network própria
+                                    libvirtd.service + sockets enabled no boot
 Docker                            : "firewall-backend": "nftables", tabela docker-bridges própria
+                                    docker.service + docker.socket enabled no boot
 Tailscale                         : iptables-nft (mas em tabelas dedicadas, sem conflito)
 IP forwarding                     : ativo persistentemente
 Rede libvirt default              : virbr0 (192.168.122.0/24), NAT, autostart=yes
 Bridge Docker default             : docker0 (172.17.0.0/16), NAT
 Coexistência VMs <-> containers   : redes isoladas (ver ADR)
-Grupo do usuário                  : libvirt, kvm
+Grupo do usuário                  : libvirt, kvm, docker
 ```
 
 ---
@@ -361,6 +399,9 @@ Grupo do usuário                  : libvirt, kvm
 | `/etc/sysctl.d/99-libvirt-forward.conf` | Criado (se necessário) | Persistir IP forwarding |
 | Grupo `libvirt` no `/etc/group` | Modificado | Usuário adicionado |
 | Grupo `kvm` no `/etc/group` | Modificado | Usuário adicionado |
+| Grupo `docker` no `/etc/group` | Modificado | Usuário adicionado |
+| `/etc/systemd/system/multi-user.target.wants/docker.service` | Symlink | Docker enabled no boot |
+| `/etc/systemd/system/sockets.target.wants/docker.socket` | Symlink | Docker socket enabled no boot |
 | `/var/lib/libvirt/images/` | Populado | ISOs e discos das VMs |
 
 ---
@@ -389,6 +430,34 @@ sudo nft list table ip docker-bridges | head -20
 # Logs
 sudo journalctl -u libvirtd -f
 sudo journalctl -u docker -f
+```
+
+### Validação pós-reboot
+
+Após qualquer reboot, confirmar que tudo voltou no automático:
+
+```bash
+# Serviços ativos?
+sudo systemctl is-active libvirtd docker tailscaled firewalld
+
+# Habilitados no boot?
+sudo systemctl is-enabled libvirtd docker.service docker.socket firewalld
+
+# Tabelas nftables presentes (cada componente em sua casa)?
+sudo nft list tables
+
+# Rede libvirt default ativa?
+sudo virsh net-list --all
+
+# Usuário tem acesso sem sudo?
+docker ps        # sem erro de permissão
+virsh list       # se aplicável (precisa de logout/login pra libvirt sem sudo)
+```
+
+Se algum service não estiver `enabled`, aplicar:
+
+```bash
+sudo systemctl enable libvirtd docker.service docker.socket
 ```
 
 ---

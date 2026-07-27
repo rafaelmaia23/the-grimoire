@@ -1,6 +1,6 @@
 # Fix: Redragon Zeus Pro (H510-PRO) — Áudio via dongle mudo abaixo de 100% no Linux
 
-- **Data (revisão):** 2026-07-20
+- **Data (revisão):** 2026-07-26
 - **Data (original):** 2026-04-22
 - **Local:** Pc pessoal
 - **Sistema:** Fedora 44, KDE Plasma 6 (Wayland), PipeWire 1.6.7 / WirePlumber
@@ -71,6 +71,35 @@ não quebrou — mas confirma que qualquer att pode reordenar.
 **Lição:** `/var/lib/alsa/asound.state` é mutável e reescrito automaticamente em
 shutdown. Não é confiável como fonte de verdade para "PCM sempre em 100%". O fix
 precisa chumbar o valor num lugar imutável — a própria regra udev.
+
+### Terceira recorrência (2026-07-26, após nova att do sistema)
+Áudio via dongle mudo de novo. Diagnóstico — **causa nova, não relacionada às anteriores**:
+
+- `soft-mixer = true` continuava aplicado corretamente ao card (confirmado via `pw-dump`).
+- `amixer -c headset get PCM` mostrava `[0%]` nos dois canais — PCM zerado, mudo total.
+- **Desta vez o `asound.state` NÃO era o culpado** — o bloco `state.headset` nem tinha entrada de PCM salva.
+- A regra udev estava **quebrada por uma quebra de linha espúria no meio do `RUN+=`**,
+  logo após `sset`. `wc -l` mostrava 2 linhas onde deveria haver 1, e o
+  `journalctl -b` do boot registrava o systemd-udevd rejeitando **as duas**:
+  ```
+  /etc/udev/rules.d/90-redragon-headset.rules:1 Invalid key/value pair, ignoring.
+  /etc/udev/rules.d/90-redragon-headset.rules:2 Invalid key/value pair, ignoring.
+  ```
+  Ou seja: a regra nunca disparava na conexão do dongle → o `amixer 100%` nunca rodava
+  → PCM ficava em 0% → mudo.
+
+Provável origem da quebra: artefato de edição/cópia (hard-wrap em ~80 colunas caindo
+exatamente depois de `sset`). Não foi regressão do sistema nem reordenação de card
+(o card continuou `headset`); foi o arquivo da regra virar lixo sintático.
+
+**Correção:** reescrever a regra numa **única linha** e recarregar o udev. Verificado
+via `cat -A` (nenhum `$` no meio da linha), `journalctl` sem `Invalid key/value pair`,
+e teste ao vivo zerando o PCM + `udevadm trigger` restaurando os 100%.
+
+**Lição:** a regra udev tem que ser **uma linha só**. Sempre validar após editar com
+`wc -l` (deve ser 1) e `cat -A` (o `$` de fim de linha só pode aparecer no final).
+Um `journalctl -b | grep 90-redragon` que mostre `Invalid key/value pair` é o sinal
+inequívoco de que a regra está quebrada e não dispara.
 
 ---
 
@@ -188,7 +217,7 @@ mostrar `[100%]` nos dois canais **imediatamente**, sem intervenção manual.
 | Arquivo | Tipo | Descrição |
 |---|---|---|
 | `~/.config/wireplumber/wireplumber.conf.d/51-h510-soft-mixer.conf` | Criado | Força volume por software no card do dongle (`api.alsa.soft-mixer`) |
-| `/etc/udev/rules.d/90-redragon-headset.rules` | Modificado (2026-07-20) | Chama `amixer` direto com `PCM=100%` chumbado na regra — não depende mais de `alsactl restore` nem do `asound.state` |
+| `/etc/udev/rules.d/90-redragon-headset.rules` | Modificado (2026-07-20; recriado 2026-07-26) | Chama `amixer` direto com `PCM=100%` chumbado na regra — não depende mais de `alsactl restore` nem do `asound.state`. **Deve ser 1 linha só** (quebra de linha invalida a regra). |
 
 ---
 
@@ -203,6 +232,11 @@ wpctl status                     # sinks/devices ativos
 
 # Ver o controle de hardware do dongle (o vilão):
 amixer -c headset get 'PCM'      # se estiver em 0% e o som cortar abaixo de 100% → é este bug
+
+# A regra udev está íntegra? (recorrência de 2026-07-26: quebra de linha no RUN+=)
+wc -l /etc/udev/rules.d/90-redragon-headset.rules      # DEVE ser 1
+cat -A /etc/udev/rules.d/90-redragon-headset.rules     # o '$' só pode aparecer no FIM da linha
+journalctl -b | grep 90-redragon                       # 'Invalid key/value pair' = regra quebrada, não dispara
 
 # Ver eventos USB ao replugar o dongle:
 sudo dmesg -w                    # (precisa de sudo)
@@ -255,4 +289,10 @@ grep -B1 -A10 "^state.headset" /var/lib/alsa/asound.state | head -60
 - **`RUN+=` em udev deve matchar `KERNEL=="controlC*"`** para eventos de card,
   senão dispara múltiplas vezes (uma para cada subdevice `pcmC*D*p`) e/ou pode
   disparar antes do control device estar pronto para o `amixer`.
+- **A regra udev tem que ser UMA LINHA só** (regressão de 2026-07-26). Uma quebra de
+  linha no meio do `RUN+=` faz o udev rejeitar as duas metades silenciosamente
+  (`Invalid key/value pair, ignoring` no `journalctl -b`) e a regra nunca dispara —
+  áudio mudo, sem erro óbvio. Após qualquer edição do arquivo, validar com
+  `wc -l` (= 1) e `cat -A` (sem `$` no meio). Ao reescrever pela CLI, usar
+  `printf '%s\n' '<regra>'` (não `echo` com aspas que possam ser quebradas por hard-wrap).
 ```

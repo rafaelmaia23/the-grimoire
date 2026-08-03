@@ -1,6 +1,6 @@
 # Fix: Redragon Zeus Pro (H510-PRO) — Áudio via dongle mudo abaixo de 100% no Linux
 
-- **Data (revisão):** 2026-07-26
+- **Data (revisão):** 2026-08-03
 - **Data (original):** 2026-04-22
 - **Local:** Pc pessoal
 - **Sistema:** Fedora 44, KDE Plasma 6 (Wayland), PipeWire 1.6.7 / WirePlumber
@@ -101,6 +101,66 @@ e teste ao vivo zerando o PCM + `udevadm trigger` restaurando os 100%.
 Um `journalctl -b | grep 90-redragon` que mostre `Invalid key/value pair` é o sinal
 inequívoco de que a regra está quebrada e não dispara.
 
+### Quarta recorrência (2026-08-03, após att do systemd para 259.8) — causa nova: `%` sem escape em `RUN+=`
+
+Sintoma reportado: fone sem áudio de novo. Hipótese aventada antes de investigar: o
+serviço/regra tenta achar o dongle no boot e, como o dongle costuma estar desconectado
+nesse momento (o usuário só conecta quando vai usar), talvez isso quebre a regra.
+**Essa hipótese não se confirmou** — a causa real foi outra, e o timing do plug do
+dongle é irrelevante para ela (ver diagnóstico abaixo).
+
+Diagnóstico:
+
+- Arquivo da regra: íntegra, uma linha só, sem quebra espúria (`wc -l` = 1, `cat -A`
+  sem `$` no meio). Ou seja, não é repetição da recorrência de 07-26.
+- `journalctl -b 0` mostrou um erro **diferente** de todas as recorrências anteriores,
+  disparado no **parse do arquivo pelo `systemd-udevd`, logo no início do boot**
+  (11:36:17 e 11:36:39) — **antes** do dongle sequer ser enumerado (11:36:53):
+  ```
+  /etc/udev/rules.d/90-redragon-headset.rules:1 Invalid value
+  "/usr/bin/amixer -c headset sset PCM 100% 100%" for RUN
+  (char 40: invalid substitution type), ignoring.
+  ```
+  O caractere 40 é o primeiro `%` de `100%`. Para o `udev`, `%` dentro de `RUN+=` é
+  prefixo de especificador de substituição (`%k`, `%p`, `%n`...); um `%` "solto"
+  (seguido de espaço, não de um especificador válido) sempre foi tecnicamente inválido,
+  mas versões antigas do `systemd-udevd` toleravam isso. `rpm -qa --last` confirmou que
+  o pacote `systemd` (e `systemd-udev` junto) foi atualizado **nesse mesmo boot** para
+  `259.8-1.fc44` — essa versão passou a tratar isso como **erro fatal de parse**, e
+  descarta a regra inteira (`ignoring`), não só o `%` ambíguo.
+- Confirmado também: como a falha é no parse do arquivo (acontece uma vez, quando o
+  `systemd-udevd` carrega as regras), ela independe de o dongle estar plugado no boot
+  ou ser plugado depois — **a hipótese do usuário sobre timing de conexão não se
+  aplica a esta causa**. Pode ainda ser uma preocupação legítima para robustez geral,
+  mas não foi o que quebrou desta vez.
+- Por que "voltou sozinho" antes da investigação: o `PCM,0` foi encontrado em 100%
+  mesmo com a regra confirmadamente quebrada (não disparou em nenhuma das duas
+  conexões do dongle detectadas no boot) e sem nenhuma entrada de `PCM` salva no
+  `asound.state` para restaurar. Ou seja, não foi o fix rodando — foi o hardware
+  calhando de subir no estado alto (~100) no power-on-reset dessa vez, em vez do
+  estado mudo (0). Sorte, não correção — o fix continuava morto e o próximo
+  replug/boot podia voltar a mutar a qualquer momento.
+
+**Correção:** escapar o `%` como `%%` no valor de `RUN+=` (a forma que o `udev` exige
+para um `%` literal):
+
+```
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{idVendor}=="040b", ATTRS{idProduct}=="0897", RUN+="/usr/bin/amixer -c headset sset PCM 100%% 100%%"
+```
+
+Verificado: `cat -A` (uma linha, sem `$` no meio), PCM zerado manualmente para simular
+o bug, `sudo udevadm trigger --action=add --subsystem-match=sound` disparando a regra
+e restaurando `[100%]` nos dois canais, e `journalctl` sem nenhum `Invalid value`/
+`Invalid key/value pair` após o reload.
+
+**Lição:** `%` dentro de `RUN+=` do udev **precisa ser escapado como `%%`** — não é
+apenas estilo, passou a ser **obrigatório** a partir do systemd 259.8 (antes era
+tolerado). Qualquer regra udev com `RUN+=` que tenha `%` literal (percentuais,
+por exemplo) deve usar `%%`. Após qualquer atualização do `systemd`/`systemd-udev`,
+vale reconferir `journalctl -b | grep 90-redragon` por `Invalid value` (parse
+rejeitado) além de `Invalid key/value pair` (quebra de linha) — são dois modos de
+falha distintos com a mesma mensagem final ("ignoring").
+
 ---
 
 ## Causa raiz
@@ -186,8 +246,13 @@ pronto), e por `ATTRS{idVendor}` / `ATTRS{idProduct}` do dongle (imune a reorden
 **Arquivo:** `/etc/udev/rules.d/90-redragon-headset.rules`
 
 ```
-ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{idVendor}=="040b", ATTRS{idProduct}=="0897", RUN+="/usr/bin/amixer -c headset sset PCM 100% 100%"
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{idVendor}=="040b", ATTRS{idProduct}=="0897", RUN+="/usr/bin/amixer -c headset sset PCM 100%% 100%%"
 ```
+
+> O `%` tem que ser escapado como `%%` — para o `udev`, `%` dentro de `RUN+=` é prefixo
+> de especificador de substituição. A partir do systemd 259.8 (recorrência de
+> 2026-08-03), um `%` literal sem escape faz o `udev` rejeitar a regra inteira no parse
+> (`Invalid value ... invalid substitution type, ignoring`).
 
 Aplicar:
 
@@ -217,7 +282,7 @@ mostrar `[100%]` nos dois canais **imediatamente**, sem intervenção manual.
 | Arquivo | Tipo | Descrição |
 |---|---|---|
 | `~/.config/wireplumber/wireplumber.conf.d/51-h510-soft-mixer.conf` | Criado | Força volume por software no card do dongle (`api.alsa.soft-mixer`) |
-| `/etc/udev/rules.d/90-redragon-headset.rules` | Modificado (2026-07-20; recriado 2026-07-26) | Chama `amixer` direto com `PCM=100%` chumbado na regra — não depende mais de `alsactl restore` nem do `asound.state`. **Deve ser 1 linha só** (quebra de linha invalida a regra). |
+| `/etc/udev/rules.d/90-redragon-headset.rules` | Modificado (2026-07-20; recriado 2026-07-26; `%%` escapado em 2026-08-03) | Chama `amixer` direto com `PCM=100%` chumbado na regra — não depende mais de `alsactl restore` nem do `asound.state`. **Deve ser 1 linha só** (quebra de linha invalida a regra) e o `%` **deve** ser `%%` (systemd ≥ 259.8 rejeita `%` sem escape). |
 
 ---
 
@@ -233,10 +298,11 @@ wpctl status                     # sinks/devices ativos
 # Ver o controle de hardware do dongle (o vilão):
 amixer -c headset get 'PCM'      # se estiver em 0% e o som cortar abaixo de 100% → é este bug
 
-# A regra udev está íntegra? (recorrência de 2026-07-26: quebra de linha no RUN+=)
-wc -l /etc/udev/rules.d/90-redragon-headset.rules      # DEVE ser 1
-cat -A /etc/udev/rules.d/90-redragon-headset.rules     # o '$' só pode aparecer no FIM da linha
-journalctl -b | grep 90-redragon                       # 'Invalid key/value pair' = regra quebrada, não dispara
+# A regra udev está íntegra?
+wc -l /etc/udev/rules.d/90-redragon-headset.rules      # DEVE ser 1 (recorrência 07-26: quebra de linha)
+cat -A /etc/udev/rules.d/90-redragon-headset.rules     # o '$' só pode aparecer no FIM da linha; e o RUN+= deve ter '%%' (não '%' solto)
+journalctl -b | grep 90-redragon                       # 'Invalid key/value pair' (quebra de linha) OU
+                                                        # 'Invalid value ... invalid substitution type' (recorrência 08-03: '%' sem escape) = regra quebrada, não dispara
 
 # Ver eventos USB ao replugar o dongle:
 sudo dmesg -w                    # (precisa de sudo)
@@ -295,4 +361,10 @@ grep -B1 -A10 "^state.headset" /var/lib/alsa/asound.state | head -60
   áudio mudo, sem erro óbvio. Após qualquer edição do arquivo, validar com
   `wc -l` (= 1) e `cat -A` (sem `$` no meio). Ao reescrever pela CLI, usar
   `printf '%s\n' '<regra>'` (não `echo` com aspas que possam ser quebradas por hard-wrap).
+- **`%` dentro de `RUN+=` tem que ser `%%`** (regressão de 2026-08-03, systemd 259.8).
+  `udev` trata `%` como prefixo de especificador (`%k`, `%p`...); um `%` solto sempre
+  foi tecnicamente inválido, mas só passou a ser **erro fatal de parse** (regra inteira
+  descartada) a partir dessa versão. Atualizações do `systemd`/`systemd-udev` são,
+  portanto, um segundo gatilho de recorrência além de att do Plasma — sempre reconferir
+  a regra após qualquer att que toque `systemd`.
 ```

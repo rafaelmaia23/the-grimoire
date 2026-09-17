@@ -1,9 +1,9 @@
 # Fix: Redragon Zeus Pro (H510-PRO) — Áudio via dongle mudo abaixo de 100% no Linux
 
-- **Data (revisão):** 2026-08-03
+- **Data (revisão):** 2026-09-17
 - **Data (original):** 2026-04-22
 - **Local:** Pc pessoal
-- **Sistema:** Fedora 44, KDE Plasma 6 (Wayland), PipeWire 1.6.7 / WirePlumber
+- **Sistema:** Fedora 44, KDE Plasma 6 (Wayland), PipeWire 1.6.8 / WirePlumber 0.5.14, kernel 7.2.5
 - **Hardware:** Redragon Zeus Pro H510-PRO (Weltrend `040b:0897`), dongle 2.4GHz
 
 ---
@@ -17,8 +17,8 @@ abaixo do limiar colapsa para silêncio.
 
 **Solução definitiva (2026-07-20):** forçar o WirePlumber a NÃO usar o mixer de
 hardware desse card (`api.alsa.soft-mixer = true`) e, em toda conexão do dongle,
-uma regra udev chama `amixer` direto para chumbar `PCM=100%` (valor codificado
-na regra — **não** depende do `/var/lib/alsa/asound.state`). Assim todo o volume
+uma regra udev chama `amixer` direto para chumbar `PCM,0=100%` **e** `PCM,1=100%`
+(valores codificados na regra — **não** depende do `/var/lib/alsa/asound.state`). Assim todo o volume
 passa a ser feito em software e o hardware fica sempre escancarado, e o fix é
 imune a corrupção do estado ALSA salvo.
 
@@ -161,6 +161,50 @@ vale reconferir `journalctl -b | grep 90-redragon` por `Invalid value` (parse
 rejeitado) além de `Invalid key/value pair` (quebra de linha) — são dois modos de
 falha distintos com a mesma mensagem final ("ignoring").
 
+### Quinta recorrência (2026-09-17, após att do sistema / kernel 7.2.5) — causa nova: controle `PCM,1` que não existia
+
+Sintoma **diferente** dos anteriores: não era mudo — o áudio via dongle saía **só pelo
+lado direito**. (Espelho do sintoma original de abril, que era só o esquerdo.)
+
+Diagnóstico — todas as peças do fix estavam íntegras:
+
+- `PCM,0` em `[100%]` nos dois canais; regra udev 1 linha, `%%` escapado, `journalctl -b`
+  sem nenhum `Invalid`; `soft-mixer = true` aplicado (`pw-dump`); sink do PipeWire
+  balanceado (`front-left: 35% / front-right: 35%`); stream do app em `100%/100%`.
+  Ou seja: nenhuma das 4 causas anteriores.
+- pipewire/wireplumber **não** foram atualizados (ainda de julho). O que mudou foi o
+  **kernel**: 7.1.10 → 7.2.5 (instalado 14/set, primeiro boot nele na att de hoje).
+- `amixer -c headset scontents` mostrou um controle que **nunca apareceu antes**:
+  ```
+  Simple mixer control 'PCM',1
+    Capabilities: pvolume pvolume-joined pswitch pswitch-joined
+    Playback channels: Mono
+    Mono: Playback 0 [0%] [0.00dB] [on]
+  ```
+  (`numid=10`, `name='PCM Playback Volume',index=1`). O `snd-usb-audio` do kernel novo
+  passou a expor um segundo feature unit do firmware do dongle. Apesar de "Mono", na
+  prática ele governa o canal **esquerdo** — em 0% o esquerdo some.
+- A regra udev só chumbava `PCM` (= `PCM,0`), então o `PCM,1` ficava no estado de
+  power-on-reset do hardware (0).
+
+**Correção:** `amixer -c headset sset PCM,1 100%` resolveu na hora (confirmado pelo
+usuário). Regra udev atualizada para chumbar os dois controles com dois `RUN+=`:
+
+```
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{idVendor}=="040b", ATTRS{idProduct}=="0897", RUN+="/usr/bin/amixer -c headset sset PCM,0 100%% 100%%", RUN+="/usr/bin/amixer -c headset sset PCM,1 100%%"
+```
+
+Armadilha no teste: `udevadm trigger` é assíncrono. Rodar `amixer` imediatamente
+depois mostrou `PCM,1` ainda em 0% e pareceu que a regra não disparava — `udevadm test`
+confirmou que ela casava e, segundos depois, o valor já estava em 100%. Sempre
+encadear `udevadm settle` após o `trigger` antes de conferir.
+
+**Lição:** o conjunto de controles ALSA que o card expõe **depende do kernel**. Att de
+kernel é o terceiro gatilho de recorrência (além de Plasma e systemd). No diagnóstico,
+não olhar só o `PCM,0`: rodar `amixer -c headset scontents` e conferir **todos** os
+controles de playback — qualquer um em 0% é suspeito. Se um dia aparecer um `PCM,2`,
+é o mesmo padrão.
+
 ---
 
 ## Causa raiz
@@ -225,17 +269,18 @@ systemctl --user restart wireplumber
 
 ```bash
 # Sobe os dois canais para 100% (usar o NOME do card, não o índice)
-amixer -c headset sset 'PCM' 100% 100%
+amixer -c headset sset 'PCM',0 100% 100%
+amixer -c headset sset 'PCM',1 100%        # controle extra exposto a partir do kernel 7.2.5
 
-# Verificar (deve mostrar Front Left e Front Right em 100%)
-amixer -c headset get 'PCM'
+# Verificar (todos os controles de playback devem estar em 100%)
+amixer -c headset scontents
 ```
 
 > **Não** rodar `alsactl store` — isso reintroduz a dependência do arquivo mutável
 > `asound.state`, que foi justamente a causa da recorrência de 2026-07-20. A
 > persistência entre conexões é responsabilidade da regra udev abaixo.
 
-### 3. Regra udev — chumbar `PCM=100%` a cada conexão do dongle
+### 3. Regra udev — chumbar `PCM,0` e `PCM,1` em 100% a cada conexão do dongle
 
 Como o dongle é plugado depois do boot, o `alsa-restore.service` sozinho não basta.
 A regra dispara `amixer` **direto** com o valor codificado — não lê nenhum arquivo
@@ -246,9 +291,11 @@ pronto), e por `ATTRS{idVendor}` / `ATTRS{idProduct}` do dongle (imune a reorden
 **Arquivo:** `/etc/udev/rules.d/90-redragon-headset.rules`
 
 ```
-ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{idVendor}=="040b", ATTRS{idProduct}=="0897", RUN+="/usr/bin/amixer -c headset sset PCM 100%% 100%%"
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC*", ATTRS{idVendor}=="040b", ATTRS{idProduct}=="0897", RUN+="/usr/bin/amixer -c headset sset PCM,0 100%% 100%%", RUN+="/usr/bin/amixer -c headset sset PCM,1 100%%"
 ```
 
+> Dois `RUN+=` na mesma regra: o udev executa ambos. `PCM,1` é mono (um valor só).
+>
 > O `%` tem que ser escapado como `%%` — para o `udev`, `%` dentro de `RUN+=` é prefixo
 > de especificador de substituição. A partir do systemd 259.8 (recorrência de
 > 2026-08-03), um `%` literal sem escape faz o `udev` rejeitar a regra inteira no parse
@@ -260,16 +307,16 @@ Aplicar:
 sudo udevadm control --reload-rules
 ```
 
-Testar: desconectar e reconectar o dongle. `amixer -c headset get PCM` deve
-mostrar `[100%]` nos dois canais **imediatamente**, sem intervenção manual.
+Testar: desconectar e reconectar o dongle. `amixer -c headset scontents` deve
+mostrar `[100%]` em `PCM,0` (FL+FR) e em `PCM,1` **imediatamente**, sem intervenção manual.
 
 ---
 
 ## Estado final
 
 - WirePlumber faz todo o volume em software; **nunca** toca no `PCM,0`.
-- `PCM,0` fica em 100% FL+FR, forçado pela regra udev a cada conexão do dongle
-  (valor chumbado na regra — **não** depende de `asound.state`).
+- `PCM,0` (FL+FR) e `PCM,1` (mono, kernel ≥ 7.2.5) ficam em 100%, forçados pela regra
+  udev a cada conexão do dongle (valores chumbados na regra — **não** depende de `asound.state`).
 - Regra udev matcha por `idVendor/idProduct` do dongle (imune a reordenação de card)
   e por `KERNEL=="controlC*"` (dispara uma vez, no momento certo).
 - Volume funciona em qualquer nível pelo painel do KDE, nos dois canais.
@@ -282,7 +329,7 @@ mostrar `[100%]` nos dois canais **imediatamente**, sem intervenção manual.
 | Arquivo | Tipo | Descrição |
 |---|---|---|
 | `~/.config/wireplumber/wireplumber.conf.d/51-h510-soft-mixer.conf` | Criado | Força volume por software no card do dongle (`api.alsa.soft-mixer`) |
-| `/etc/udev/rules.d/90-redragon-headset.rules` | Modificado (2026-07-20; recriado 2026-07-26; `%%` escapado em 2026-08-03) | Chama `amixer` direto com `PCM=100%` chumbado na regra — não depende mais de `alsactl restore` nem do `asound.state`. **Deve ser 1 linha só** (quebra de linha invalida a regra) e o `%` **deve** ser `%%` (systemd ≥ 259.8 rejeita `%` sem escape). |
+| `/etc/udev/rules.d/90-redragon-headset.rules` | Modificado (2026-07-20; recriado 2026-07-26; `%%` escapado em 2026-08-03; `PCM,1` adicionado em 2026-09-17) | Chama `amixer` direto com `PCM,0=100%` e `PCM,1=100%` chumbados na regra — não depende mais de `alsactl restore` nem do `asound.state`. **Deve ser 1 linha só** (quebra de linha invalida a regra) e o `%` **deve** ser `%%` (systemd ≥ 259.8 rejeita `%` sem escape). |
 
 ---
 
@@ -295,8 +342,9 @@ aplay -l                         # shortname do card (ex.: card 0: headset)
 pactl list cards short           # device.name do PipeWire
 wpctl status                     # sinks/devices ativos
 
-# Ver o controle de hardware do dongle (o vilão):
-amixer -c headset get 'PCM'      # se estiver em 0% e o som cortar abaixo de 100% → é este bug
+# Ver TODOS os controles de hardware do dongle (os vilões):
+amixer -c headset scontents      # qualquer controle de playback em 0% → é este bug
+                                 # PCM,0 zerado = mudo; PCM,1 zerado = só canal direito (recorrência 09-17)
 
 # A regra udev está íntegra?
 wc -l /etc/udev/rules.d/90-redragon-headset.rules      # DEVE ser 1 (recorrência 07-26: quebra de linha)
@@ -314,15 +362,18 @@ lsusb                            # dongle = 040b:0897 Weltrend / BT = 2357:0604 
 ## Referência rápida — comandos úteis
 
 ```bash
-# Verificar o PCM de hardware (deve estar sempre 100% FL+FR)
-amixer -c headset get 'PCM'
+# Verificar os controles de hardware (PCM,0 e PCM,1 devem estar sempre em 100%)
+amixer -c headset scontents
 
 # Corrigir manualmente se necessário (não deveria precisar — a regra udev cuida)
-amixer -c headset sset 'PCM' 100% 100%
+amixer -c headset sset 'PCM',0 100% 100%
+amixer -c headset sset 'PCM',1 100%
 # NÃO rodar 'alsactl store' — vide seção 2 da Solução.
 
 # Forçar disparo da regra udev sem replugar (útil pra testar)
-sudo udevadm trigger --action=add --subsystem-match=sound
+# ATENÇÃO: 'trigger' retorna antes de o evento ser processado — sem o 'settle',
+# um 'amixer' logo em seguida lê o valor ANTIGO e parece que a regra não disparou.
+sudo udevadm trigger --action=add --subsystem-match=sound && sudo udevadm settle
 
 # Reaplicar config do WirePlumber
 systemctl --user restart wireplumber
@@ -367,4 +418,8 @@ grep -B1 -A10 "^state.headset" /var/lib/alsa/asound.state | head -60
   descartada) a partir dessa versão. Atualizações do `systemd`/`systemd-udev` são,
   portanto, um segundo gatilho de recorrência além de att do Plasma — sempre reconferir
   a regra após qualquer att que toque `systemd`.
-```
+- **Att de kernel muda o conjunto de controles ALSA** (regressão de 2026-09-17, kernel
+  7.2.5). O `snd-usb-audio` passou a expor um `PCM,1` (mono) que o firmware do dongle
+  deixa em 0 no power-on e que, na prática, governa o canal esquerdo. A regra udev
+  precisa chumbar **todos** os controles de playback, não só o `PCM,0`. No diagnóstico,
+  usar `amixer -c headset scontents` (lista tudo) em vez de `get PCM` (só o índice 0).
